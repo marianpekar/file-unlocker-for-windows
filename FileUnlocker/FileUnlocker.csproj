@@ -1,8 +1,14 @@
-<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk.WindowsDesktop">
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>netcoreapp3.1</TargetFramework>
+
+    <!-- Target .NET 10 desktop -->
+    <TargetFramework>net10.0-windows</TargetFramework>
+
+    <!-- Needed for WinForms UI -->
+    <UseWindowsForms>true</UseWindowsForms>
+
     <Company>NA</Company>
     <Authors>Marian Pekár</Authors>
     <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
@@ -10,7 +16,6 @@
     <Version>1.1.0</Version>
     <PackageProjectUrl>https://github.com/marianpekar/file-unlocker-for-windows/releases</PackageProjectUrl>
     <RepositoryUrl>https://github.com/marianpekar/file-unlocker-for-windows</RepositoryUrl>
-    <PackageIcon></PackageIcon>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|AnyCPU'">
