@@ -1,4 +1,5 @@
-﻿using System.Collections.Generic;
+using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Text;
@@ -7,11 +8,25 @@ namespace FileUnlocker
 {
     public static class FileUnlocker
     {
-        public static void Unlock(string path, bool silent) 
+        public static void Unlock(string path, bool silent)
         {
-            Process[] processes = path.Exist() && path.IsDirectoryPath() ? GetProcessesFromDirectoryPath(path) : GetProcessesFromFilePath(path);
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                if (!silent)
+                {
+                    Message.Show("No file or directory path was provided.", "Unlock");
+                }
+                return;
+            }
 
-            if (IsProcessArrayEmpty(processes, path, silent)) return;
+            var processes = path.Exist() && path.IsDirectoryPath()
+                ? GetProcessesFromDirectoryPath(path)
+                : GetProcessesFromFilePath(path);
+
+            if (IsProcessArrayEmpty(processes, path, silent))
+            {
+                return;
+            }
 
             if (silent)
             {
@@ -25,46 +40,82 @@ namespace FileUnlocker
 
         private static Process[] GetProcessesFromDirectoryPath(string directoryPath)
         {
-            string[] filePaths = Directory.GetFiles(directoryPath, string.Empty, SearchOption.AllDirectories);
-            List<Process> processes = new List<Process>();
+            string[] filePaths = Directory.GetFiles(directoryPath, "*", SearchOption.AllDirectories);
+
+            var processesById = new Dictionary<int, Process>();
 
             foreach (string path in filePaths)
             {
-                processes.AddRange(RestartManager.GetProcesses(path));
+                foreach (var process in RestartManager.GetProcesses(path))
+                {
+                    if (!processesById.ContainsKey(process.Id))
+                    {
+                        processesById[process.Id] = process;
+                    }
+                }
             }
 
-            return processes.ToArray();
+            return new List<Process>(processesById.Values).ToArray();
         }
 
         private static Process[] GetProcessesFromFilePath(string filePath)
         {
-            return RestartManager.GetProcesses(filePath).ToArray();
+            var processesById = new Dictionary<int, Process>();
+
+            foreach (var process in RestartManager.GetProcesses(filePath))
+            {
+                if (!processesById.ContainsKey(process.Id))
+                {
+                    processesById[process.Id] = process;
+                }
+            }
+
+            return new List<Process>(processesById.Values).ToArray();
         }
 
         private static void ShowDialog(string path, Process[] processes)
         {
-            StringBuilder stringBuilder = new StringBuilder();
-            stringBuilder.AppendLine($"{Path.GetFileName(path)} is locked by:");
+            var sb = new StringBuilder();
+            sb.AppendLine($"{Path.GetFileName(path)} is locked by:");
 
             foreach (Process process in processes)
             {
-                stringBuilder.AppendLine($"{process.ProcessName} ({process.Id})");
+                sb.AppendLine($"{process.ProcessName} ({process.Id})");
             }
-            stringBuilder.AppendLine($"Kill {(processes.Length > 1 ? "processes" : "process")}?");
 
-            Message.ShowYesNoDialog(stringBuilder.ToString(), "Unlock", KillProcesses, null, processes);
+            sb.AppendLine($"Kill {(processes.Length > 1 ? "processes" : "process")}?");
+
+            Message.ShowYesNoDialog(sb.ToString(), "Unlock", KillProcesses, null, processes);
         }
 
         private static void KillProcesses(Process[] processes)
         {
             foreach (Process process in processes)
             {
-                process.Kill(true);
+                try
+                {
+                    if (process.HasExited)
+                    {
+                        continue;
+                    }
+
+                    process.Kill(entireProcessTree: true);
+
+                    process.WaitForExit(2000);
+                }
+                catch (Exception ex) when (ex is InvalidOperationException || ex is System.ComponentModel.Win32Exception)
+                {
+                }
+                finally
+                {
+                    process.Dispose();
+                }
             }
         }
+
         private static bool IsProcessArrayEmpty(Process[] processes, string path, bool silent)
         {
-            if (processes.Length == 0)
+            if (processes == null || processes.Length == 0)
             {
                 if (!silent)
                 {
