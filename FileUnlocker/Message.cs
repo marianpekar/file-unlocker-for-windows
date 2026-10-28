@@ -1,45 +1,60 @@
-﻿using System;
+using System;
 using System.Runtime.InteropServices;
 
 namespace FileUnlocker
 {
+    /// <summary>
+    /// Message box dialogs. Every dialog is forced to the foreground and made
+    /// topmost, because a dialog opened from the Explorer context menu otherwise
+    /// tends to appear behind the Explorer window.
+    /// </summary>
     public static class Message
     {
+        /// <summary>Dialog title used everywhere.</summary>
+        public const string Title = "Unlock";
 
-        [DllImport("User32.dll", CharSet = CharSet.Unicode)]
-        private static extern int MessageBox(IntPtr h, string m, string c, uint type);
+        [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern int MessageBox(IntPtr hWnd, string text, string caption, uint type);
 
-        public static void Show(string message, string title) 
+        private const uint MB_OK = 0x00000000;
+        private const uint MB_YESNO = 0x00000004;
+        private const uint MB_ICONERROR = 0x00000010;
+        private const uint MB_ICONQUESTION = 0x00000020;
+        private const uint MB_ICONWARNING = 0x00000030;
+        private const uint MB_ICONINFORMATION = 0x00000040;
+        private const uint MB_DEFBUTTON2 = 0x00000100;
+        private const uint MB_TOPMOST = 0x00040000;
+        private const uint MB_SETFOREGROUND = 0x00010000;
+
+        private const int IDYES = 6;
+        private const int IDNO = 7;
+
+        /// <summary>Shows an informational dialog.</summary>
+        public static void ShowInfo(string message)
         {
-            MessageBox((IntPtr)0, message, title, (uint)TYPE.MB_OK);
+            Show(message, MB_OK | MB_ICONINFORMATION);
         }
 
-        private enum TYPE 
+        /// <summary>Shows an error dialog.</summary>
+        public static void ShowError(string message)
         {
-            MB_OK = 0,
-            MB_YESNO = 4,
+            Show(message, MB_OK | MB_ICONERROR);
         }
 
-        private enum RESULT {
-            MB_YES = 6,
-            MB_NO = 7
+        /// <summary>
+        /// Asks a yes or no question. The default button is No, so pressing Enter
+        /// by accident never closes anything.
+        /// </summary>
+        /// <returns>True when the user confirmed.</returns>
+        public static bool Confirm(string message)
+        {
+            int result = Show(message, MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2 | MB_TOPMOST | MB_SETFOREGROUND);
+            return result == IDYES;
         }
 
-        public static void ShowYesNoDialog<T>(string message, string title, Action<T> OnYes, Action<T> OnNo, T obj)
+        private static int Show(string message, uint type)
         {
-            RESULT result = (RESULT)MessageBox((IntPtr)0, message, title, (uint)TYPE.MB_YESNO);
-
-            switch (result)
-            {
-                case RESULT.MB_YES:
-                    OnYes?.Invoke(obj);
-                    break;
-                case RESULT.MB_NO:
-                    OnNo?.Invoke(obj);
-                    break;
-                default:
-                    break;
-            }
+            return MessageBox(IntPtr.Zero, message ?? string.Empty, Title, type);
         }
     }
 }
