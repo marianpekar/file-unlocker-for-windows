@@ -66,6 +66,101 @@ reg delete "HKCU\Software\Classes\*\shell\FileUnlocker" /f
 
 `remove.bat` removes all three verbs and is safe to run twice; `remove.bat /allusers` removes the machine-wide entries (elevated prompt required).
 
+## Build and install in one step
+
+`build-and-install.ps1` finds a .NET SDK on the machine (or downloads one into a cache folder), builds the project from a throwaway copy, publishes it into a permanent folder outside the repository, registers the Explorer context menu, and then runs the installed executable to prove it works. It never modifies the repository and cleans up its temporary build folder on every path, including failure.
+
+Before anything is copied or deleted, the script checks that `-InstallDir` is a sensible place for an install folder, and it proves the build starts before it copies anything into that folder.
+
+### Running it
+
+Double-click `build-and-install.cmd` in the repository root; it runs the PowerShell script with the execution policy bypassed for that one process, then pauses so the output can be read. Any arguments are passed straight through, for example `build-and-install.cmd -Uninstall`.
+
+From a PowerShell prompt:
+
+```powershell
+.\build-and-install.ps1
+```
+
+### Parameters
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| `-InstallDir` | `%LOCALAPPDATA%\Programs\FileUnlocker` | Where the tool is installed. |
+| `-Runtime` | `win-x64` | Runtime identifier to publish for. The only other accepted value is `win-arm64`. |
+| `-FrameworkDependent` | off (self-contained single file) | Publish without bundling the .NET runtime. Smaller output, but the matching runtime must be installed. |
+| `-AllUsers` | off (current user) | Register the Explorer menu for all users instead of the current user. Needs administrator rights. |
+| `-SkipInstall` | off | Build and install the files only; do not touch the context menu. |
+| `-Uninstall` | off | Remove the menu entries and delete `-InstallDir`, then stop. Never builds. |
+| `-NoDownload` | off | Never download an SDK; fail with instructions if none is usable. |
+| `-SdkDir` | `%LOCALAPPDATA%\FileUnlockerSdk` | Where a downloaded SDK is cached and looked up. |
+| `-Quiet` | off | Print only warnings, errors and the final summary. |
+
+### Examples
+
+```powershell
+# Default: self-contained install for the current user, menu registered.
+.\build-and-install.ps1
+
+# Smaller output; needs the matching .NET runtime on the machine.
+.\build-and-install.ps1 -FrameworkDependent
+
+# Register the menu for every user (a UAC prompt appears).
+.\build-and-install.ps1 -AllUsers
+
+# Install to a folder of your choice, including one with spaces.
+.\build-and-install.ps1 -InstallDir "D:\Tools\File Unlocker"
+
+# Build and install the files, but leave the context menu alone.
+.\build-and-install.ps1 -SkipInstall
+
+# Remove the menu entries and delete the install folder.
+.\build-and-install.ps1 -Uninstall
+
+# Use a folder that already contains an SDK and never touch the network.
+.\build-and-install.ps1 -NoDownload -SdkDir "C:\Program Files\dotnet"
+
+# Only warnings, errors and the final summary.
+.\build-and-install.ps1 -Quiet
+```
+
+### What it writes and where
+
+* The application goes into the install folder, by default `%LOCALAPPDATA%\Programs\FileUnlocker`. The folder receives `FileUnlocker.exe`, `install.bat`, `remove.bat` and `key.ico`.
+* A downloaded SDK is cached under `%LOCALAPPDATA%\FileUnlockerSdk`. Nothing else outside the repository is written unless a download is needed.
+* The context menu is registered once, either per user (`HKCU\Software\Classes\*\shell\FileUnlocker`, `...\Directory\shell\FileUnlocker` and `...\Directory\Background\shell\FileUnlocker`) or, with `-AllUsers`, machine-wide under `HKEY_CLASSES_ROOT`. `-SkipInstall` skips this step and says so.
+* The build is verified in the staging folder **before** anything is installed, so a build that cannot start leaves no half-installed folder behind. The script then verifies the copy in the install folder again as a final check.
+
+### Which folders the script refuses, and what it will not delete
+
+`-InstallDir` is refused, with exit code `1` and without touching anything, when the resolved path:
+
+* is a drive or share root (`C:\`, `\`, `/`, `\\server\share`),
+* contains the repository or the temp folder, or lies inside the temp folder,
+* is a system or personal folder: `%USERPROFILE%`, `%LOCALAPPDATA%`, `%APPDATA%`, `%TEMP%`, `%WINDIR%`, `Program Files`, `Program Files (x86)`, `%ProgramData%`, the system drive, or the Desktop, Documents and Downloads folders,
+* or sits directly under a drive root, such as `C:\FileUnlocker`. Put it inside a subfolder instead, as in `C:\Tools\FileUnlocker`.
+
+The same check runs before `-Uninstall` deletes anything, so a typo cannot turn into a recursive delete of a system folder.
+
+Copying is non-destructive unless the folder is provably an install of ours. When the install folder contains `FileUnlocker.exe` and **nothing else but** `install.bat`, `remove.bat` and `key.ico`, the copy mirrors and removes stale files left by an older version. If the folder holds any other file, the script copies the build in without deleting anything, and says which of the two it did. Files that are already there are therefore never removed from a folder that also holds your own data.
+
+### Why install outside `bin\Release`
+
+The registered commands store **absolute paths** to the executable and the icon. A folder inside `bin\Release` is wiped by the next build and changes whenever the configuration changes, so the menu would silently point at a file that no longer exists. Installing into a fixed folder keeps the registered paths valid across rebuilds.
+
+### When only an older SDK is available
+
+The project targets a recent .NET version. If the machine only has an older SDK, the script retargets a **throwaway copy** of the project to that SDK's framework and says so, then builds from that copy. The repository itself is never modified; the script even compares `git status --porcelain` before and after and warns loudly if the repository changed.
+
+### Troubleshooting the script
+
+* **`-InstallDir` was refused.** The message names the path and the reason. Point at a folder inside a subfolder (for example `D:\Tools\FileUnlocker`), or omit `-InstallDir` for the default; the script explains this in the message and never touches the refused folder.
+* **No internet and no SDK.** The download fails and the script exits with code 1, listing `winget install Microsoft.DotNet.SDK.10` and the `-SdkDir` option. Re-run with `-NoDownload -SdkDir <a folder that already contains an SDK>`.
+* **UAC declined for `-AllUsers`.** Elevation is refused or cancelled, the script reports it and exits 1 without claiming the menu was registered. Run it again from an elevated prompt, or drop `-AllUsers` to install for the current user.
+* **The executable does not start after `-FrameworkDependent`.** That build needs the matching .NET runtime. Re-run without `-FrameworkDependent` for a self-contained install, which bundles the runtime.
+* **Any other build failure.** The script prints the last lines of the failing command's own output, so the reason (a missing runtime pack, a restore error, a proxy problem) is visible without re-running anything by hand. Ordinary progress text from `dotnet` and NuGet goes to stderr and is captured and shown rather than treated as a crash.
+* **SmartScreen or an antivirus warning.** A self-contained single-file executable is a large unsigned binary, so Windows or a third-party scanner may warn the first time it runs. Allow it, or use a release build signed by the publisher.
+
 ## Usage
 
 ### From Explorer
@@ -237,6 +332,8 @@ It never unlocks anything by itself: it frees the item by closing its users.
 | A path starting with `-` is rejected as an unknown option | A token starting with `-` is always an option. | Put `--` before it: `FileUnlocker.exe -- "-weird.txt"`. |
 
 ## Building from source
+
+For a build that also installs to a permanent folder and registers the menu, use `build-and-install.ps1` (see [Build and install in one step](#build-and-install-in-one-step)); the command below is the manual equivalent.
 
 ```
 dotnet build FileUnlocker.sln -c Release
